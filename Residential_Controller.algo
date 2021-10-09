@@ -9,22 +9,22 @@ DEFINE Column USING _id, _status, _numOfFloors, _numOfElevators
     SET elevatorList TO EMPTY Array
     SET callButtonsList TO EMPTY Array
     
-    '' Create a sequence that fills the elevatorsList with Elevators objects
+    '' Sequence that fills the elevatorList with Elevators objects
     SEQUENCE fillElevatorList
-        SET elevatorId = 1
+        SET elevatorId TO 1
         FOR numOfElevators
-            SET elevatorList TO ADD NEW Elevator WITH elevatorId, currentFloor
+            ADD NEW Elevator WITH elevatorId, currentFloor TO elevatorList
             INCREMENT elevatorId by 1
         ENDFOR
     ENDSEQUENCE
 
     CALL fillElevatorList
 
-    '' Create a sequence that fills the callButtonsList with CallButton objects
+    '' Sequence that fills the callButtonsList with CallButton objects
     SEQUENCE fillcallButtonsList
         SET floor TO 1
 
-        FOR numOfFloors ''10
+        FOR numOfFloors
             IF floor IS LESS THAN numOfFloors THEN
                 SET callButtonsList TO ADD NEW CallButton WITH floor, "up"
             ELSE IF numOfFloors IS GREATER THAN fooor
@@ -44,6 +44,8 @@ DEFINE Column USING _id, _status, _numOfFloors, _numOfElevators
         ADD currentFloor TO Elevator floorRequestList
         '' Time to move the elevator
         CALL chosenElevator move
+        
+        RETURN chosenElevator
     ENDSEQUENCE
 ENDDEFINE
 
@@ -52,10 +54,10 @@ DEFINE Elevator USING _id, _currentFloor
     SET ID TO _id
     SET status TO idle
     SET currentFloor TO _currentFloor
-    SET direction
+    SET direction TO up
     SET floorRequestList TO Empty Array
 
-    '' Move the elevator according to where toFloor (the destination floor) is in relation to currentFloor (where the elevator is before moving)
+    '' Moving the elevator to the requested floor(s)
     SEQUENCE move
         '' Go through the list of floor requests until it's empty
         WHILE floorRequestList IS NOT EMPTY
@@ -63,8 +65,8 @@ DEFINE Elevator USING _id, _currentFloor
             FOR EACH floor IN floorRequestList
                 IF currentFloor IS LESS THAN first element IN floorRequestList THEN
                     SET direction TO up
-                    IF doors opened IS true THEN
-                        CALL doors closeDoors
+                    IF Doors opened IS true THEN
+                        CALL Doors closeDoors
                     ENDIF
                     SET status TO moving
 
@@ -73,13 +75,13 @@ DEFINE Elevator USING _id, _currentFloor
                         INCREMENT currentFloor by 1
                     ENDWHILE
 
-                    CALL doors openDoors
+                    CALL Doors openDoors
                     SET status TO stopped
-                    CALL doors closeDoors
+                    CALL Doors closeDoors
                 ELSE IF currentFloor IS GREATER THAN first element IN floorRequestList THEN
                     SET direction TO down
-                    IF doors opened IS true
-                        CALL doors closeDoors
+                    IF Doors opened IS true
+                        CALL Doors closeDoors
                     ENDIF
                     SET status TO moving
 
@@ -88,14 +90,16 @@ DEFINE Elevator USING _id, _currentFloor
                         DECREMENT currentFloor by 1
                     ENDWHILE
 
-                    CALL doors openDoors
+                    CALL Doors openDoors
                     SET status TO stopped
-                    CALL doors closeDoors
+                    CALL Doors closeDoors
                 ENDIF
 
                 REMOVE first element IN floorRequestList
             ENDFOR
         ENDWHILE
+
+        SET status TO idle
     ENDSEQUENCE
 
     '' Would be once the user presses a floor button inside the elevator
@@ -103,39 +107,31 @@ DEFINE Elevator USING _id, _currentFloor
         ADD floor TO floorRequestList
         CALL elevator move
     ENDSEQUENCE
-
-    '' Sort the floorRequestList based on if the elevator's direction is up or down
-    SEQUENCE sortElevator
-        IF direction IS up THEN
-            SORT floorRequestList IN ascending order
-        ELSE 
-            SORT floorRequestList IN descending order
-    ENDSEQUENCE
 ENDDEFINE
 
-'' Call Button Class
+'' Call Button Class (up/down buttons outside elevator)
 DEFINE CallButton USING callButtonValue, direction
-    SET callButtonValue
-    SET direction
+    SET callButtonValue TO callButtonValue
+    SET direction TO direction
 
-    '' 
-    SEQUENCE buttonPressed WITH callButtonValue
-        CALL column requestElevator WITH callButtonValue, direction
+    SEQUENCE buttonPressed USING callButtonValue, direction
+       SET bestElev CALL column requestElevator WITH callButtonValue, direction
+       RETURN bestElev
     ENDSEQUENCE
 ENDDEFINE
 
-'' Floor Request Button Class
-DEFINE FloorRequestButton
-    SET requestedFloor
-    SET requestedDirection
+'' Floor Request Button Class (floor buttons inside the elevator)
+DEFINE FloorRequestButton USING requestedFloor
+    SET requestedFloor TO requestedFloor
 
-    '' Add the request to 
-    CALL column requestElevator WITH requestedFloor, requestedDirection
+    SEQUENCE buttonPressed USING requestedFloor
+        CALL requestFloor WITH requestedFloor
+    ENDSEQUENCE
 ENDDEFINE
 
 '' Doors Class
 DEFINE Doors
-    SET opened
+    SET opened TO false
 
     SEQUENCE openDoors
         SET opened TO true
@@ -150,8 +146,18 @@ ENDDEFINE
 
 '' Determine which elevator would be the best to use
 SEQUENCE findBestElevator USING requestedFloor, requestedDirection
-    SET bestElevator
+    SET bestElevator TO 0
     SET bestScore TO 100
+    SET floorDistanceList TO EMPTY list
+    SET difference TO 0
+
+    '' Find difference between each elevator's floor and the requested floor, to get the closest elevator
+    FOR EACH elevator IN column elevatorList
+        SET difference TO absolute value OF requestedFloor MINUS elevator currentFloor
+        ADD difference TO floorDistanceList
+    ENDFOR
+
+    SORT floorDistanceList FROM lowest difference TO highest difference
 
     FOR EACH elevator IN column elevatorList
         '' Elevator is currently at the floor requested, it's stopped, and going in the direction requested
@@ -163,16 +169,83 @@ SEQUENCE findBestElevator USING requestedFloor, requestedDirection
         '' Elevator is currently lower than the floor requested and it's already moving in the direction the user is at
         ELSE IF elevator currentFloor IS LESS THAN requestedFloor AND elevator status IS moving AND elevator direction IS EQUAL TO requestedDirection THEN
             SET bestScore TO 2
+        '' Elevator is currently higher than the floor requested, it's idle, and the distance from requested floor to this elevator's floor is less than the rest
+        ELSE IF elevator currentFloor IS GREATER THAN requestedFloor AND elevator status IS idle AND this elevator IN floorDistanceList IS LESS THAN OTHERS THEN
+            SET bestScore TO 3
+        '' Elevator is currently lower than the floor requested, it's idle, and the distance from requested floor to this elevator's floor is less than the rest
+        ELSE IF elevator currentFloor IS LESS THAN requestedFloor AND elevator status IS idle AND this elevator IN floorDistanceList IS LESS THAN OTHERS THEN
+            SET bestScore TO 3
         '' Elevator is currently higher than the floor requested and it's NOT moving in the direction the user is at
         ELSE IF elevator currentFloor IS GREATER THAN requestedFloor AND elevator status IS moving AND elevator direction IS NOT EQUAL TO requestedDirection THEN
-            SET bestScore TO 3
+            SET bestScore TO 4
         '' Elevator is currently lower than the floor requested and it's NOT moving in the direction the user is at
         ELSE IF elevator currentFloor IS LESS THAN requestedFloor AND elevator status IS moving AND elevator direction IS NOT EQUAL TO requestedDirection THEN
-            SET bestScore TO 3
+            SET bestScore TO 4
         '' Elevator is idle
         ELSE IF elevator status IS idle
-            SET bestScore TO 4
+            SET bestScore TO 5
+        ENDIF
     ENDFOR
+
     SORT elevatorList FROM lowest bestScore TO highest bestScore
     SET bestElevator TO elevator that has lowest bestScore
+    RETURN bestElevator
 ENDSEQUENCE
+
+
+'' --- Scenario 1 --- ''
+'' Setup columns
+SET c1 TO NEW Column WITH 1 AND online AND 10 AND 2
+SET c1 first elevator currentFloor TO 2
+SET c1 second elevator currentFloor TO 6
+
+'' A passenger calls elevator from floor 3
+SET elevator TO CALL c1 CallButton buttonPressed WITH 3 AND up
+'' Passenger would get on, then request to go to floor 7
+CALL elevator FloorRequestButton buttonPressed WITH 7
+'' ElevatorA now on 7th floor
+'' --- /End Scenario --- ''
+
+'' --- Scenario 2 --- ''
+SET c1 TO NEW Column WITH 1 AND online AND 10 AND 2
+SET c1 first elevator currentFloor TO 10
+SET c1 second elevator currentFloor TO 3
+
+'' A passenger calls elevator
+SET elev TO CALL c1 CallButton buttonPressed WITH 1 AND up
+'' Passenger would get on, then request to go to floor 6
+CALL elev requestFloor buttonPressed WITH 6
+'' ElevatorA now on 6th floor
+'' Couple of minutes pass...
+'' A passenger calls elevator
+SET elv TO CALL c1 CallButton buttonPressed WITH 3 AND down
+'' Passenger would get on, then request to go to floor 5
+CALL elev requestFloor buttonPressed WITH 5
+'' ElevatorA now on 5th floor
+'' Lastly, another passenger calls elevator
+SET elev TO CALL c1 CallButton buttonPressed WITH 9 AND down
+'' Passenger would get on, then request to go to floor 2
+CALL elev requestFloor buttonPressed WITH 2
+'' ElevatorB now on 2nd floor
+'' --- /End Scenario --- ''
+
+
+'' --- Scenario 3 --- ''
+SET c1 TO NEW Column WITH 1 AND online AND 10 AND 2
+SET c1 first elevator currentFloor TO 10
+SET c1 second elevator currentFloor TO 3
+SET c1 second elevator status TO moving
+SET c1 second elevator direction TO up
+
+'' A passenger calls elevator
+SET elev TO CALL c1 CallButton buttonPressed WITH 3 AND down
+'' Passenger would get on, then request to go to floor 2
+CALL elev requestFloor buttonPressed WITH 2
+'' ElevatorA now on 2nd floor
+'' Few minutes later...
+'' A passenger calls elevator
+SET elev TO CALL c1 CallButton buttonPressed WITH 10 AND down
+'' Passenger would get on, then request to go to floor 2
+CALL elev requestFloor buttonPressed WITH 3
+'' ElevatorB now on 3rd floor
+'' --- /End Scenario --- ''
